@@ -1,0 +1,39 @@
+[tool.poetry]
+name = "event-analyzer"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "polina_cherepanova",email = "pvcherepanova_1@edu.hse.ru"}
+]
+readme = "README.md"
+packages = [{ include = "event-analyzer" }]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+pandas = "*"
+catboost = "*"
+scikit-learn = "*"
+streamlit = "*"
+tsfresh = "*"
+
+[tool.poetry.dev-dependencies]
+ruff = "*"
+mypy = "*"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.ruff]
+fix = true
+unsafe-fixes = true
+line-length = 120
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.ruff.lint.isort]
+no-lines-before = ["standard-library", "local-folder"]
+known-third-party = []
+known-local-folder = []
+lines-after-imports = 2
