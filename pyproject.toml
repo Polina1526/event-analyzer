@@ -13,6 +13,7 @@ catboost = "*"
 scikit-learn = "*"
 streamlit = "*"
 tsfresh = "*"
+pandas-stubs = "*"
 
 [poetry.group.dev.dependencies]
 ruff = "*"
