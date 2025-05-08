@@ -2,11 +2,9 @@
 name = "event-analyzer"
 version = "0.1.0"
 description = ""
-authors = [
-    {name = "polina_cherepanova",email = "pvcherepanova_1@edu.hse.ru"}
-]
+authors = ["polina_cherepanova <pvcherepanova_1@edu.hse.ru>"]
 readme = "README.md"
-packages = [{ include = "event-analyzer" }]
+packages = [{ include = "app" }]
 
 [tool.poetry.dependencies]
 python = "^3.11"
@@ -16,7 +14,7 @@ scikit-learn = "*"
 streamlit = "*"
 tsfresh = "*"
 
-[tool.poetry.dev-dependencies]
+[poetry.group.dev.dependencies]
 ruff = "*"
 mypy = "*"
 
