@@ -84,19 +84,27 @@ def get_data_preprocessing_settings(event_options: list[str], max_days_in_data: 
 
 
 class SidebarSettings(pydantic.BaseModel):
-    train_data_count: int
+    data_count: int
 
 
 def create_sidebar(threadid_count: int) -> SidebarSettings:
     st.sidebar.header("Дополнительные настройки")
-    train_data_count: int = st.sidebar.number_input(
+    data_count: int = st.sidebar.number_input(
         label="Кол-во цепочек, использующихся для обучения и валидации",
         min_value=2,
         max_value=threadid_count,
-        value=constants.DEFAULT_TRAIN_DATA_COUNT,
+        value=constants.DEFAULT_DATA_COUNT,
         step=1,
     )
-    return SidebarSettings(train_data_count=train_data_count)
+    return SidebarSettings(data_count=data_count)
+
+
+def limit_data_size(df: pd.DataFrame, data_count: int, random_state: int = 42) -> pd.DataFrame:
+    return df[
+        df[constants.THREADID_COL_NAME].isin(
+            pd.Series(df[constants.THREADID_COL_NAME].unique()).sample(data_count, random_state=random_state)
+        )
+    ]
 
 
 def main_app() -> None:
@@ -119,6 +127,9 @@ def main_app() -> None:
     )
 
     sidebar_settings: SidebarSettings = create_sidebar(threadid_count=raw_data[constants.THREADID_COL_NAME].nunique())
+
+    processed_data = limit_data_size(df=processed_data, data_count=sidebar_settings.data_count)
+    # тут можно вставить инфу о том, сколько данных было отфильтровано
 
     st.write(sidebar_settings)  # TODO
 
