@@ -6,7 +6,8 @@ import pandas as pd
 import pydantic
 import streamlit as st
 from data_processing import preprocess_data
-from tsfresh import extract_features
+from tsfresh import extract_features, select_features
+from tsfresh.utilities.dataframe_functions import impute
 
 
 N_JOBS_AVAILABLE: typing.Final[int] = os.cpu_count()
@@ -133,6 +134,50 @@ def _filter_unnecessary_columns(df: pd.DataFrame) -> pd.DataFrame:
     ]
 
 
+@st.cache_data(show_spinner="Извлечение признаков цепочек из данных")
+def _feature_extraction(df: pd.DataFrame, chunksize: int) -> pd.DataFrame:
+    return extract_features(
+        _filter_unnecessary_columns(
+            df.sort_values([f"{constants.EVENT_CHAIN_ID_CON_NAME}_encoded", constants.TIMESTAMP_COL_NAME])
+        ),
+        column_id=f"{constants.EVENT_CHAIN_ID_CON_NAME}_encoded",
+        column_sort=constants.TIMESTAMP_COL_NAME,
+        chunksize=chunksize,
+        n_jobs=N_JOBS_AVAILABLE - 2,
+        disable_progressbar=True,
+    )
+
+
+@st.cache_data(show_spinner="Заполнение пропусков в данных")
+def _impute_extracted_features(df: pd.DataFrame) -> pd.DataFrame:
+    return impute(df)
+
+
+@st.cache_data(show_spinner="Отбор полезных фичей")
+def _select_extracted_features(df: pd.DataFrame, y: pd.DataFrame) -> pd.DataFrame:
+    return select_features(df, y.y)
+
+
+def feature_extraction(
+    df: pd.DataFrame, chunksize: int, y_to_id_mapping: pd.DataFrame
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    extracted_features = _feature_extraction(df=df, chunksize=chunksize)
+    extracted_features = _impute_extracted_features(extracted_features)
+
+    y = (
+        y_to_id_mapping[
+            y_to_id_mapping[constants.EVENT_CHAIN_ID_CON_NAME].isin(df[constants.EVENT_CHAIN_ID_CON_NAME].unique())
+        ]
+        .sort_values(constants.EVENT_CHAIN_ID_CON_NAME)
+        .drop_duplicates(constants.EVENT_CHAIN_ID_CON_NAME)
+        .set_index(constants.EVENT_CHAIN_ID_CON_NAME)
+    )
+
+    features_filtered: pd.DataFrame = _select_extracted_features(df=extracted_features, y=y)
+
+    return features_filtered, y
+
+
 def main_app() -> None:
     st.title("Анализатор событий")
     st.sidebar.header("Дополнительные настройки")
@@ -162,31 +207,20 @@ def main_app() -> None:
     processed_data = limit_data_size(df=processed_data, data_count=sidebar_settings.data_count)
     # тут можно вставить инфу о том, сколько данных было отфильтровано  # TODO
 
-    st.write(sidebar_settings)  # TODO
+    if not st.button("Запустить обучение модели"):
+        st.stop()
 
-    # st.write(raw_data.head(10))  # TODO
-    st.write(processed_data.head(10))  # TODO
+    # st.write(processed_data.head(10))  # TODO
     st.write(y_to_id_mapping.head(10))  # TODO
 
-    st.write(f"{constants.EVENT_CHAIN_ID_CON_NAME}_encoded")  # TODO
-    st.write(
-        _filter_unnecessary_columns(
-            processed_data.sort_values([f"{constants.EVENT_CHAIN_ID_CON_NAME}_encoded", constants.TIMESTAMP_COL_NAME])
-        ).head(10)
+    features: pd.DataFrame
+    y: pd.DataFrame
+    features, y = feature_extraction(
+        df=processed_data, chunksize=sidebar_settings.feature_extruction_chunksize, y_to_id_mapping=y_to_id_mapping
     )
 
-    extracted_features = extract_features(
-        _filter_unnecessary_columns(
-            processed_data.sort_values([f"{constants.EVENT_CHAIN_ID_CON_NAME}_encoded", constants.TIMESTAMP_COL_NAME])
-        ),
-        column_id=f"{constants.EVENT_CHAIN_ID_CON_NAME}_encoded",
-        column_sort=constants.TIMESTAMP_COL_NAME,
-        chunksize=sidebar_settings.feature_extruction_chunksize,
-        n_jobs=N_JOBS_AVAILABLE - 2,
-        disable_progressbar=True,
-    )
-
-    st.write(extracted_features.head(10))  # TODO
+    st.write(features.head(10))  # TODO
+    st.write(y.head(10))  # TODO
 
 
 main_app()
