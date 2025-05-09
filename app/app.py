@@ -5,7 +5,10 @@ import constants
 import pandas as pd
 import pydantic
 import streamlit as st
+from catboost import CatBoostClassifier
 from data_processing import preprocess_data
+from sklearn.metrics import average_precision_score, roc_auc_score
+from sklearn.model_selection import train_test_split
 from tsfresh import extract_features, select_features
 from tsfresh.utilities.dataframe_functions import impute
 
@@ -23,7 +26,6 @@ def load_train_data() -> pd.DataFrame:
     if raw_data.empty:
         st.error("Загруженный файл пуст")
         st.stop()
-
     return raw_data
 
 
@@ -65,7 +67,6 @@ def column_standardization(df: pd.DataFrame) -> pd.DataFrame:
     df[constants.TIMESTAMP_COL_NAME] = pd.to_datetime(df[constants.TIMESTAMP_COL_NAME], unit="ms")
     df[constants.THREADID_COL_NAME] = df[constants.THREADID_COL_NAME].astype(int)
     df[constants.EVENT_TYPE_COL_NAME] = df[constants.EVENT_TYPE_COL_NAME].astype(str)
-
     return df
 
 
@@ -87,17 +88,19 @@ def get_data_preprocessing_settings(event_options: list[str], max_days_in_data: 
             )
     if not _target_event_name or not window_days:
         st.stop()
-
     return _target_event_name[0], window_days
 
 
 class SidebarSettings(pydantic.BaseModel):
     data_count: int
     feature_extruction_chunksize: int
+    training_validation_size: float
+    training_catboost_iterations: int
+    training_catboost_depth: int
+    training_catboost_learning_rate: float
 
 
 def create_sidebar(threadid_count: int) -> SidebarSettings:
-    st.sidebar.header("Дополнительные настройки")
     data_count: int = st.sidebar.number_input(
         label="Кол-во цепочек, использующихся для обучения и валидации",
         min_value=2,
@@ -112,7 +115,34 @@ def create_sidebar(threadid_count: int) -> SidebarSettings:
         value=min(constants.DEFAULT_CHUNKSIZE, threadid_count),
         step=1,
     )
-    return SidebarSettings(data_count=data_count, feature_extruction_chunksize=feature_extruction_chunksize)
+    training_validation_size: float = st.sidebar.number_input(
+        label="Доля валидационной выборки",
+        min_value=0.0,
+        max_value=1.0,
+        value=constants.DEFAULT_VALIDATION_SIZE,
+        step=0.05,
+    )
+    training_catboost_iterations: int = st.sidebar.number_input(
+        label="Кол-во итераций при обучении",
+        min_value=0,
+        max_value=100000,
+        value=constants.DEFAULT_CATBOOST_ITERATIONS,
+        step=1,
+    )
+    training_catboost_depth: int = st.sidebar.number_input(
+        label="Глубина деревьев в бустинге", min_value=0, max_value=100, value=constants.DEFAULT_CATBOOST_DEPTH, step=1
+    )
+    training_catboost_learning_rate: float = st.sidebar.number_input(
+        label="Laerning rate", min_value=0.0, max_value=1.0, value=constants.DEFAULT_CATBOOST_LEARNING_RATE, step=0.001
+    )
+    return SidebarSettings(
+        data_count=data_count,
+        feature_extruction_chunksize=feature_extruction_chunksize,
+        training_validation_size=training_validation_size,
+        training_catboost_iterations=training_catboost_iterations,
+        training_catboost_depth=training_catboost_depth,
+        training_catboost_learning_rate=training_catboost_learning_rate,
+    )
 
 
 def limit_data_size(df: pd.DataFrame, data_count: int, random_state: int = 42) -> pd.DataFrame:
@@ -174,13 +204,52 @@ def feature_extraction(
     )
 
     features_filtered: pd.DataFrame = _select_extracted_features(df=extracted_features, y=y)
-
     return features_filtered, y
+
+
+@st.cache_data(show_spinner=False)
+def learn_model(
+    features: pd.DataFrame,
+    y: pd.DataFrame,
+    iterations: int,
+    depth: int,
+    learning_rate: float,
+    test_size: float = 0.2,
+    random_state: int = 42,
+) -> tuple[CatBoostClassifier, pd.DataFrame]:
+    X_train, X_test, y_train, y_test = train_test_split(features, y.y, test_size=test_size, random_state=random_state)
+
+    model = CatBoostClassifier(
+        iterations=iterations,
+        depth=depth,
+        learning_rate=learning_rate,
+        loss_function="Logloss",
+        eval_metric="AUC",
+        verbose=False,
+    )
+    with st.spinner("Обучение модели"):
+        model.fit(X_train, y_train, eval_set=(X_test, y_test), use_best_model=True)
+
+    with st.spinner("Подсчёт метрик на обученной модели"):
+        probas_X_train = model.predict_proba(X_train)[:, 1]
+        probas_X_test = model.predict_proba(X_test)[:, 1]
+
+    metrics: dict[str, list[str]] = {
+        "Обучающая выборка": [
+            f"{roc_auc_score(y_train, probas_X_train):.4f}",
+            f"{average_precision_score(y_train, probas_X_train):.4f}",
+        ],
+        "Валидационная выборка": [
+            f"{roc_auc_score(y_test, probas_X_test):.4f}",
+            f"{average_precision_score(y_test, probas_X_test):.4f}",
+        ],
+    }
+    return model, pd.DataFrame.from_dict(metrics, orient="index", columns=["ROC-AUC", "PR-AUC"])
 
 
 def main_app() -> None:
     st.title("Анализатор событий")
-    st.sidebar.header("Дополнительные настройки")
+    st.sidebar.header("Расширенные настройки")
 
     raw_data: pd.DataFrame = load_train_data()
     raw_data = column_standardization(raw_data)
@@ -211,7 +280,7 @@ def main_app() -> None:
         st.stop()
 
     # st.write(processed_data.head(10))  # TODO
-    st.write(y_to_id_mapping.head(10))  # TODO
+    # st.write(y_to_id_mapping.head(10))  # TODO
 
     features: pd.DataFrame
     y: pd.DataFrame
@@ -219,8 +288,28 @@ def main_app() -> None:
         df=processed_data, chunksize=sidebar_settings.feature_extruction_chunksize, y_to_id_mapping=y_to_id_mapping
     )
 
-    st.write(features.head(10))  # TODO
-    st.write(y.head(10))  # TODO
+    model: CatBoostClassifier
+    metrics_df: pd.DataFrame
+    model, metrics_df = learn_model(
+        features=features,
+        y=y,
+        test_size=sidebar_settings.training_validation_size,
+        iterations=sidebar_settings.training_catboost_iterations,
+        depth=sidebar_settings.training_catboost_depth,
+        learning_rate=sidebar_settings.training_catboost_learning_rate,
+    )
+
+    st.subheader("Результаты обучения модели")
+    st.write(metrics_df)
+
+    model_name: str = st.text_input(label="Введите название модели для сохранения")
+    model.save(f"{model_name}.cbm")
+
+    # st.write(features.head(10))  # TODO
+    # st.write(y.head(10))  # TODO
+
+    # st.write(model)  # TODO
+    # st.write(metrics_df)  # TODO
 
 
 main_app()
