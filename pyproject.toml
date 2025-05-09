@@ -14,7 +14,7 @@ scikit-learn = "*"
 streamlit = "*"
 tsfresh = "*"
 pandas-stubs = "*"
-pydantic = "^2.11.4"
+pydantic = "*"
 
 [poetry.group.dev.dependencies]
 ruff = "*"
