@@ -1,6 +1,7 @@
 import constants
 import numpy as np
 import pandas as pd
+import streamlit as st
 from sklearn.preprocessing import LabelEncoder
 
 
@@ -89,7 +90,7 @@ def _aggregate_features_before_non_target_events(
 
     random_events["window_start"] = random_events[constants.TIMESTAMP_COL_NAME] - pd.to_timedelta(time_window)
     random_events = random_events[[constants.TIMESTAMP_COL_NAME, constants.THREADID_COL_NAME, "window_start"]]
-    random_events.columns = [constants.THREADID_COL_NAME, "random_event_time", "window_start"]
+    random_events = random_events.rename(columns={constants.TIMESTAMP_COL_NAME: "random_event_time"})
 
     merged = pd.merge(
         non_target_users,
@@ -111,6 +112,7 @@ def _aggregate_features_before_non_target_events(
     return result.reset_index(drop=True)
 
 
+@st.cache_data(show_spinner="Идёт обработка данных")
 def preprocess_data(
     df: pd.DataFrame, target_event: str, time_window: str, random_state: int = 42
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -149,7 +151,7 @@ def preprocess_data(
         all_agg_data[constants.EVENT_TYPE_COL_NAME]
     )
 
-    y_to_id_mapping = (
+    y_to_id_mapping: pd.DataFrame = (
         all_agg_data[f"{constants.EVENT_CHAIN_ID_CON_NAME}_encoded"]
         .to_frame(f"{constants.EVENT_CHAIN_ID_CON_NAME}_encoded")
         .assign(y=0)

@@ -1,8 +1,15 @@
+import os
+import typing
+
 import constants
 import pandas as pd
 import pydantic
 import streamlit as st
 from data_processing import preprocess_data
+from tsfresh import extract_features
+
+
+N_JOBS_AVAILABLE: typing.Final[int] = os.cpu_count()
 
 
 def load_train_data() -> pd.DataFrame:
@@ -25,15 +32,15 @@ def column_standardization(df: pd.DataFrame) -> pd.DataFrame:
         col1, col2, col3 = st.columns(3)
         with col1:
             _timestamp_col: list = st.multiselect(
-                label="Выберете поле со временем событий", options=df.columns, max_selections=1
+                label="Выберите поле со временем событий", options=df.columns, max_selections=1
             )
         with col2:
             _threadid_col: list = st.multiselect(
-                label="Выберете поле содержащее id потоков", options=df.columns, max_selections=1
+                label="Выберите поле содержащее id потоков", options=df.columns, max_selections=1
             )
         with col3:
             _event_col: list = st.multiselect(
-                label="Выберете поле содержащее события", options=df.columns, max_selections=1
+                label="Выберите поле содержащее события", options=df.columns, max_selections=1
             )
     if not _timestamp_col or not _threadid_col or not _event_col:
         st.stop()
@@ -67,7 +74,7 @@ def get_data_preprocessing_settings(event_options: list[str], max_days_in_data: 
         col1, col2 = st.columns(2)
         with col1:
             _target_event_name: list = st.multiselect(
-                label="Выберете название целевого события", options=event_options, max_selections=1
+                label="Выберите название целевого события", options=event_options, max_selections=1
             )
         with col2:
             window_days: int = st.number_input(
@@ -85,6 +92,7 @@ def get_data_preprocessing_settings(event_options: list[str], max_days_in_data: 
 
 class SidebarSettings(pydantic.BaseModel):
     data_count: int
+    feature_extruction_chunksize: int
 
 
 def create_sidebar(threadid_count: int) -> SidebarSettings:
@@ -93,13 +101,21 @@ def create_sidebar(threadid_count: int) -> SidebarSettings:
         label="Кол-во цепочек, использующихся для обучения и валидации",
         min_value=2,
         max_value=threadid_count,
-        value=constants.DEFAULT_DATA_COUNT,
+        value=min(constants.DEFAULT_DATA_COUNT, threadid_count),
         step=1,
     )
-    return SidebarSettings(data_count=data_count)
+    feature_extruction_chunksize: int = st.sidebar.number_input(
+        label="Кол-во цепочек в одном чанке при препроцессинге",
+        min_value=1,
+        max_value=threadid_count,
+        value=min(constants.DEFAULT_CHUNKSIZE, threadid_count),
+        step=1,
+    )
+    return SidebarSettings(data_count=data_count, feature_extruction_chunksize=feature_extruction_chunksize)
 
 
 def limit_data_size(df: pd.DataFrame, data_count: int, random_state: int = 42) -> pd.DataFrame:
+    st.write(f"{constants.THREADID_COL_NAME} nunique(): {df[constants.THREADID_COL_NAME].nunique()}")  # TODO
     return df[
         df[constants.THREADID_COL_NAME].isin(
             pd.Series(df[constants.THREADID_COL_NAME].unique()).sample(data_count, random_state=random_state)
@@ -107,8 +123,19 @@ def limit_data_size(df: pd.DataFrame, data_count: int, random_state: int = 42) -
     ]
 
 
+def _filter_unnecessary_columns(df: pd.DataFrame) -> pd.DataFrame:
+    return df[
+        [
+            constants.TIMESTAMP_COL_NAME,
+            f"{constants.EVENT_CHAIN_ID_CON_NAME}_encoded",
+            f"{constants.EVENT_TYPE_COL_NAME}_encoded",
+        ]
+    ]
+
+
 def main_app() -> None:
     st.title("Анализатор событий")
+    st.sidebar.header("Дополнительные настройки")
 
     raw_data: pd.DataFrame = load_train_data()
     raw_data = column_standardization(raw_data)
@@ -122,19 +149,44 @@ def main_app() -> None:
         ).days,
     )
 
-    processed_data: pd.DataFrame = preprocess_data(
+    processed_data: pd.DataFrame
+    y_to_id_mapping: pd.DataFrame
+    processed_data, y_to_id_mapping = preprocess_data(
         df=raw_data, target_event=target_event_name, time_window=f"{window_days}D"
     )
 
-    sidebar_settings: SidebarSettings = create_sidebar(threadid_count=raw_data[constants.THREADID_COL_NAME].nunique())
+    sidebar_settings: SidebarSettings = create_sidebar(
+        threadid_count=processed_data[constants.THREADID_COL_NAME].nunique()
+    )
 
     processed_data = limit_data_size(df=processed_data, data_count=sidebar_settings.data_count)
-    # тут можно вставить инфу о том, сколько данных было отфильтровано
+    # тут можно вставить инфу о том, сколько данных было отфильтровано  # TODO
 
     st.write(sidebar_settings)  # TODO
 
-    st.write(raw_data.head(10))  # TODO
+    # st.write(raw_data.head(10))  # TODO
     st.write(processed_data.head(10))  # TODO
+    st.write(y_to_id_mapping.head(10))  # TODO
+
+    st.write(f"{constants.EVENT_CHAIN_ID_CON_NAME}_encoded")  # TODO
+    st.write(
+        _filter_unnecessary_columns(
+            processed_data.sort_values([f"{constants.EVENT_CHAIN_ID_CON_NAME}_encoded", constants.TIMESTAMP_COL_NAME])
+        ).head(10)
+    )
+
+    extracted_features = extract_features(
+        _filter_unnecessary_columns(
+            processed_data.sort_values([f"{constants.EVENT_CHAIN_ID_CON_NAME}_encoded", constants.TIMESTAMP_COL_NAME])
+        ),
+        column_id=f"{constants.EVENT_CHAIN_ID_CON_NAME}_encoded",
+        column_sort=constants.TIMESTAMP_COL_NAME,
+        chunksize=sidebar_settings.feature_extruction_chunksize,
+        n_jobs=N_JOBS_AVAILABLE - 2,
+        disable_progressbar=True,
+    )
+
+    st.write(extracted_features.head(10))  # TODO
 
 
 main_app()
