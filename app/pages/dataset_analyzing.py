@@ -13,7 +13,6 @@ def _prepare_for_display_model_pivot_table(df: pd.DataFrame) -> pd.DataFrame:
     col_position: int = df.columns.get_loc("learning_metrics")
     df = df.drop(columns=["learning_metrics"])
     df = pd.concat([df.iloc[:, :col_position], learning_metrics_df, df.iloc[:, col_position:]], axis=1)
-    # df = pd.concat([df.drop("learning_metrics", axis=1), learning_metrics_df], axis=1)
 
     df = df.rename(
         columns={
