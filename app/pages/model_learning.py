@@ -185,11 +185,6 @@ def _impute_extracted_features(df: pd.DataFrame) -> pd.DataFrame:
     return impute(df)
 
 
-@st.cache_data(show_spinner="Отбор полезных фичей")
-def _select_extracted_features(df: pd.DataFrame, y: pd.DataFrame) -> pd.DataFrame:
-    return select_features(df, y.y)
-
-
 def feature_extraction(
     df: pd.DataFrame, chunksize: int, y_to_id_mapping: pd.DataFrame
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -207,8 +202,12 @@ def feature_extraction(
         .set_index(f"{constants.EVENT_CHAIN_ID_CON_NAME}_encoded")
     )
 
-    features_filtered: pd.DataFrame = _select_extracted_features(df=extracted_features, y=y)
-    return features_filtered, y
+    return extracted_features, y
+
+
+@st.cache_data(show_spinner="Отбор полезных фичей")
+def _select_features(df: pd.DataFrame, y: pd.Series) -> pd.DataFrame:
+    return select_features(df, y)
 
 
 @st.cache_data(show_spinner=False)
@@ -220,8 +219,12 @@ def learn_model(
     learning_rate: float,
     test_size: float = 0.2,
     random_state: int = 42,
-) -> tuple[CatBoostClassifier, pd.DataFrame]:
+) -> tuple[CatBoostClassifier, pd.DataFrame, list[str]]:
     X_train, X_test, y_train, y_test = train_test_split(features, y.y, test_size=test_size, random_state=random_state)
+
+    main_features: list[str] = list(_select_features(df=X_train, y=y_train).columns)
+    X_train = X_train[main_features]
+    X_test = X_test[main_features]
 
     model = CatBoostClassifier(
         iterations=iterations,
@@ -249,7 +252,7 @@ def learn_model(
             f"{average_precision_score(y_test, probas_X_test):.4f}",
         ],
     }
-    return model, pd.DataFrame.from_dict(metrics, orient="index", columns=["ROC-AUC", "PR-AUC"])
+    return model, pd.DataFrame.from_dict(metrics, orient="index", columns=["ROC-AUC", "PR-AUC"]), main_features
 
 
 class ModelLearningResults(pydantic.BaseModel):
@@ -257,6 +260,7 @@ class ModelLearningResults(pydantic.BaseModel):
     learning_metrics: dict[str, str]
     data_file_name: str
     settings: dict
+    main_features: list[str]
 
 
 def _prepare_learning_metrics_for_saving(metrics_df: pd.DataFrame) -> dict[str, str]:
@@ -298,7 +302,9 @@ def model_learning_page() -> None:
 
     with st.form("learning_start_form"):
         model_name: str = st.text_input(label="Введите название модели для сохранения")
-        st.form_submit_button("Запустить обучение модели")
+        form_send: bool = st.form_submit_button("Запустить обучение модели")
+    if not form_send:
+        st.stop()
 
     features: pd.DataFrame
     y: pd.DataFrame
@@ -308,9 +314,9 @@ def model_learning_page() -> None:
 
     model: CatBoostClassifier
     metrics_df: pd.DataFrame
-
+    main_features: list[str]
     start_learning_time = time.time()
-    model, metrics_df = learn_model(
+    model, metrics_df, main_features = learn_model(
         features=features,
         y=y,
         test_size=sidebar_settings.training_validation_size,
@@ -335,6 +341,7 @@ def model_learning_page() -> None:
             learning_metrics=_prepare_learning_metrics_for_saving(metrics_df),
             data_file_name=file_name,
             settings=sidebar_settings.model_dump(),
+            main_features=main_features,
         ).model_dump()
 
         with open(constants.MODEL_PIVOT_TABLE_PATH, mode="w") as file:
