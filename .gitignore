@@ -1,2 +1,5 @@
 *.pyc
+.venv
+.mypy_cache
 __pycache__/
+catboost_info/
