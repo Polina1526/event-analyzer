@@ -2,7 +2,6 @@ import json
 import os
 import subprocess
 import time
-import typing
 
 import constants
 import pandas as pd
@@ -17,9 +16,6 @@ from tsfresh.utilities.dataframe_functions import impute
 
 
 st.set_page_config(page_title="Обучение новой модели", page_icon="📖")
-
-
-N_JOBS_AVAILABLE: typing.Final[int] = os.cpu_count()
 
 
 def load_train_data() -> tuple[pd.DataFrame, str]:
@@ -158,16 +154,6 @@ def limit_data_size(df: pd.DataFrame, data_count: int, random_state: int = 42) -
     ]
 
 
-# def _filter_unnecessary_columns(df: pd.DataFrame) -> pd.DataFrame:
-#     return df[
-#         [
-#             constants.TIMESTAMP_COL_NAME,
-#             f"{constants.EVENT_CHAIN_ID_CON_NAME}_encoded",
-#             f"{constants.EVENT_TYPE_COL_NAME}_encoded",
-#         ]
-#     ]
-
-
 @st.cache_data(show_spinner="Извлечение признаков цепочек из данных")
 def _feature_extraction(df: pd.DataFrame, chunksize: int) -> pd.DataFrame:
     df.to_parquet(constants.FEATURE_VECTORIZATION_INPUT_PATH)
@@ -187,7 +173,11 @@ def _feature_extraction(df: pd.DataFrame, chunksize: int) -> pd.DataFrame:
         st.error("Ошибка при вычислении признаков:")
         st.text(result.stderr)
         st.stop()
-    return pd.read_parquet(constants.FEATURE_VECTORIZATION_OUTPUT_PATH)
+
+    features: pd.DataFrame = pd.read_parquet(constants.FEATURE_VECTORIZATION_OUTPUT_PATH)
+    os.remove(constants.FEATURE_VECTORIZATION_INPUT_PATH)
+    os.remove(constants.FEATURE_VECTORIZATION_OUTPUT_PATH)
+    return features
 
 
 @st.cache_data(show_spinner="Заполнение пропусков в данных")
@@ -266,12 +256,7 @@ class ModelLearningResults(pydantic.BaseModel):
     learning_time: float
     learning_metrics: dict[str, str]
     data_file_name: str
-    # n_samples: int
     settings: dict
-
-
-# class ModelPivotTable(pydantic.BaseModel):
-#     model_info: list[ModelLearningResults]
 
 
 def _prepare_learning_metrics_for_saving(metrics_df: pd.DataFrame) -> dict[str, str]:
@@ -281,7 +266,7 @@ def _prepare_learning_metrics_for_saving(metrics_df: pd.DataFrame) -> dict[str, 
 
 
 def model_learning_page() -> None:
-    st.title("Анализатор событий")
+    st.title("Обучение модели на данных с потоками событий")
     st.sidebar.header("Расширенные настройки")
 
     raw_data: pd.DataFrame
@@ -314,8 +299,6 @@ def model_learning_page() -> None:
     with st.form("learning_start_form"):
         model_name: str = st.text_input(label="Введите название модели для сохранения")
         st.form_submit_button("Запустить обучение модели")
-    # if not st.button("Запустить обучение модели"):
-    #     st.stop()
 
     features: pd.DataFrame
     y: pd.DataFrame
@@ -351,7 +334,6 @@ def model_learning_page() -> None:
             learning_time=execution_learning_time,
             learning_metrics=_prepare_learning_metrics_for_saving(metrics_df),
             data_file_name=file_name,
-            # n_samples=features.shape,
             settings=sidebar_settings.model_dump(),
         ).model_dump()
 
