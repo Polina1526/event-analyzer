@@ -195,7 +195,6 @@ def model_learning_page() -> None:
     )
 
     processed_data = limit_data_size(df=processed_data, data_count=sidebar_settings.data_count)
-    # тут можно вставить инфу о том, сколько данных было отфильтровано  # TODO
 
     with st.form("learning_start_form"):
         model_name: str = st.text_input(label="Введите название модели для сохранения")
