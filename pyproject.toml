@@ -15,6 +15,7 @@ streamlit = "*"
 tsfresh = "*"
 pandas-stubs = "*"
 pydantic = "*"
+xlsxwriter = "*"
 
 [poetry.group.dev.dependencies]
 ruff = "*"
