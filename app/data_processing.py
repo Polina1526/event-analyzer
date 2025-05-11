@@ -1,8 +1,12 @@
+import os
+import subprocess
+
 import constants
 import numpy as np
 import pandas as pd
 import streamlit as st
 from sklearn.preprocessing import LabelEncoder
+from tsfresh.utilities.dataframe_functions import impute
 
 
 def _aggregate_features_before_target_events(df: pd.DataFrame, target_event: str, time_window: str) -> pd.DataFrame:
@@ -115,11 +119,12 @@ def _aggregate_features_before_non_target_events(
 @st.cache_data(show_spinner="Идёт обработка данных")
 def preprocess_data(
     df: pd.DataFrame, target_event: str, time_window: str, random_state: int = 42
-) -> tuple[pd.DataFrame, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.DataFrame, LabelEncoder]:
     agg_data_target: pd.DataFrame = _aggregate_features_before_target_events(
         df=df, target_event=target_event, time_window=time_window
     )
-    agg_data_target.target_id = agg_data_target.target_id + 1
+    if not agg_data_target.empty:
+        agg_data_target.target_id = agg_data_target.target_id + 1
 
     agg_data_non_target: pd.DataFrame = _aggregate_features_before_non_target_events(
         df=df, target_event=target_event, time_window=time_window, min_events=1, random_state=random_state
@@ -131,10 +136,15 @@ def preprocess_data(
         .reset_index()
         .rename(columns={"index": "non_target_id"})
     )
-    non_target_index["non_target_id"] = non_target_index["non_target_id"] + int(agg_data_target.target_id.max()) + 1
+    if not agg_data_target.empty:
+        non_target_index["non_target_id"] = non_target_index["non_target_id"] + int(agg_data_target.target_id.max()) + 1
+    else:
+        non_target_index["non_target_id"] = non_target_index["non_target_id"] + 1
     agg_data_non_target = pd.merge(agg_data_non_target, non_target_index, on=constants.THREADID_COL_NAME)
 
     all_agg_data = pd.concat([agg_data_target, agg_data_non_target], axis=0)
+    if agg_data_target.empty:
+        all_agg_data["target_id"] = 0
     all_agg_data.target_id = all_agg_data.target_id.fillna(0).astype(int)
     all_agg_data.non_target_id = all_agg_data.non_target_id.fillna(0).astype(int)
 
@@ -144,7 +154,8 @@ def preprocess_data(
         + (all_agg_data.target_id + all_agg_data.non_target_id).astype(str)
     )
 
-    all_agg_data[f"{constants.EVENT_CHAIN_ID_CON_NAME}_encoded"] = LabelEncoder().fit_transform(
+    event_chain_id_col_le: LabelEncoder = LabelEncoder()
+    all_agg_data[f"{constants.EVENT_CHAIN_ID_CON_NAME}_encoded"] = event_chain_id_col_le.fit_transform(
         all_agg_data[constants.EVENT_CHAIN_ID_CON_NAME]
     )
     all_agg_data[f"{constants.EVENT_TYPE_COL_NAME}_encoded"] = LabelEncoder().fit_transform(
@@ -163,4 +174,99 @@ def preprocess_data(
         "y",
     ] = 1
 
-    return all_agg_data, y_to_id_mapping
+    return all_agg_data, y_to_id_mapping, event_chain_id_col_le
+
+
+def column_standardization(
+    df: pd.DataFrame, return_threadid_col_name: bool = False
+) -> pd.DataFrame | tuple[pd.DataFrame, str]:
+    with st.container(border=True):
+        st.subheader("Информация о датасете")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            _timestamp_col: list = st.multiselect(
+                label="Выберите поле со временем событий", options=df.columns, max_selections=1
+            )
+        with col2:
+            _threadid_col: list = st.multiselect(
+                label="Выберите поле содержащее id потоков", options=df.columns, max_selections=1
+            )
+        with col3:
+            _event_col: list = st.multiselect(
+                label="Выберите поле содержащее события", options=df.columns, max_selections=1
+            )
+    if not _timestamp_col or not _threadid_col or not _event_col:
+        st.stop()
+
+    timestamp_col: str = _timestamp_col[0]
+    threadid_col: str = _threadid_col[0]
+    event_col: str = _event_col[0]
+
+    if len(set([timestamp_col, threadid_col, event_col])) < 3:
+        st.error("Выбранные поля не могу совпадать")
+        st.stop()
+
+    df = df[[timestamp_col, threadid_col, event_col]]
+    df = df.rename(
+        columns={
+            timestamp_col: constants.TIMESTAMP_COL_NAME,
+            threadid_col: constants.THREADID_COL_NAME,
+            event_col: constants.EVENT_TYPE_COL_NAME,
+        }
+    )
+    df[constants.TIMESTAMP_COL_NAME] = pd.to_datetime(df[constants.TIMESTAMP_COL_NAME], unit="ms")
+    df[constants.THREADID_COL_NAME] = df[constants.THREADID_COL_NAME].astype(int)
+    df[constants.EVENT_TYPE_COL_NAME] = df[constants.EVENT_TYPE_COL_NAME].astype(str)
+    if return_threadid_col_name:
+        return df, threadid_col
+    return df
+
+
+@st.cache_data(show_spinner="Извлечение признаков цепочек из данных")
+def _feature_extraction(df: pd.DataFrame, chunksize: int) -> pd.DataFrame:
+    df.to_parquet(constants.FEATURE_VECTORIZATION_INPUT_PATH)
+    worker_path = os.path.abspath(os.path.join(os.path.dirname(__file__), constants.FEATURE_EXTRACTION_SCRIPT_PATH))
+    result = subprocess.run(
+        [
+            "python",
+            worker_path,
+            constants.FEATURE_VECTORIZATION_INPUT_PATH,
+            constants.FEATURE_VECTORIZATION_OUTPUT_PATH,
+            str(chunksize),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        st.error("Ошибка при вычислении признаков:")
+        st.error(result.stderr)
+        st.stop()
+
+    features: pd.DataFrame = pd.read_parquet(constants.FEATURE_VECTORIZATION_OUTPUT_PATH)
+    os.remove(constants.FEATURE_VECTORIZATION_INPUT_PATH)
+    os.remove(constants.FEATURE_VECTORIZATION_OUTPUT_PATH)
+    return features
+
+
+@st.cache_data(show_spinner="Заполнение пропусков в данных")
+def _impute_extracted_features(df: pd.DataFrame) -> pd.DataFrame:
+    return impute(df)
+
+
+def feature_extraction(
+    df: pd.DataFrame, chunksize: int, y_to_id_mapping: pd.DataFrame
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    extracted_features = _feature_extraction(df=df, chunksize=chunksize)
+    extracted_features = _impute_extracted_features(extracted_features)
+
+    y = (
+        y_to_id_mapping[
+            y_to_id_mapping[f"{constants.EVENT_CHAIN_ID_CON_NAME}_encoded"].isin(
+                df[f"{constants.EVENT_CHAIN_ID_CON_NAME}_encoded"].unique()
+            )
+        ]
+        .sort_values(f"{constants.EVENT_CHAIN_ID_CON_NAME}_encoded")
+        .drop_duplicates(f"{constants.EVENT_CHAIN_ID_CON_NAME}_encoded")
+        .set_index(f"{constants.EVENT_CHAIN_ID_CON_NAME}_encoded")
+    )
+    return extracted_features, y

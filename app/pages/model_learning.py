@@ -1,74 +1,19 @@
 import json
-import os
-import subprocess
 import time
 
 import constants
+import data_processing
 import pandas as pd
 import pydantic
 import streamlit as st
+import utils
 from catboost import CatBoostClassifier
-from data_processing import preprocess_data
 from sklearn.metrics import average_precision_score, roc_auc_score
 from sklearn.model_selection import train_test_split
 from tsfresh import select_features
-from tsfresh.utilities.dataframe_functions import impute
 
 
 st.set_page_config(page_title="Обучение новой модели", page_icon="📖")
-
-
-def load_train_data() -> tuple[pd.DataFrame, str]:
-    uploaded_file = st.file_uploader(label="Загрузите файл с данными для обучения и модели", type="csv")
-    if not uploaded_file:
-        st.stop()
-
-    raw_data = pd.read_csv(uploaded_file)
-    if raw_data.empty:
-        st.error("Загруженный файл пуст")
-        st.stop()
-    return raw_data, uploaded_file.name
-
-
-def column_standardization(df: pd.DataFrame) -> pd.DataFrame:
-    with st.container(border=True):
-        st.subheader("Информация о датасете")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            _timestamp_col: list = st.multiselect(
-                label="Выберите поле со временем событий", options=df.columns, max_selections=1
-            )
-        with col2:
-            _threadid_col: list = st.multiselect(
-                label="Выберите поле содержащее id потоков", options=df.columns, max_selections=1
-            )
-        with col3:
-            _event_col: list = st.multiselect(
-                label="Выберите поле содержащее события", options=df.columns, max_selections=1
-            )
-    if not _timestamp_col or not _threadid_col or not _event_col:
-        st.stop()
-
-    timestamp_col: str = _timestamp_col[0]
-    threadid_col: str = _threadid_col[0]
-    event_col: str = _event_col[0]
-
-    if len(set([timestamp_col, threadid_col, event_col])) < 3:
-        st.error("Выбранные поля не могу совпадать")
-        st.stop()
-
-    df = df[[timestamp_col, threadid_col, event_col]]
-    df = df.rename(
-        columns={
-            timestamp_col: constants.TIMESTAMP_COL_NAME,
-            threadid_col: constants.THREADID_COL_NAME,
-            event_col: constants.EVENT_TYPE_COL_NAME,
-        }
-    )
-    df[constants.TIMESTAMP_COL_NAME] = pd.to_datetime(df[constants.TIMESTAMP_COL_NAME], unit="ms")
-    df[constants.THREADID_COL_NAME] = df[constants.THREADID_COL_NAME].astype(int)
-    df[constants.EVENT_TYPE_COL_NAME] = df[constants.EVENT_TYPE_COL_NAME].astype(str)
-    return df
 
 
 def get_data_preprocessing_settings(event_options: list[str], max_days_in_data: int) -> tuple[str, int]:
@@ -154,57 +99,6 @@ def limit_data_size(df: pd.DataFrame, data_count: int, random_state: int = 42) -
     ]
 
 
-@st.cache_data(show_spinner="Извлечение признаков цепочек из данных")
-def _feature_extraction(df: pd.DataFrame, chunksize: int) -> pd.DataFrame:
-    df.to_parquet(constants.FEATURE_VECTORIZATION_INPUT_PATH)
-    worker_path = os.path.abspath(os.path.join(os.path.dirname(__file__), constants.FEATURE_EXTRACTION_SCRIPT_PATH))
-    result = subprocess.run(
-        [
-            "python",
-            worker_path,
-            constants.FEATURE_VECTORIZATION_INPUT_PATH,
-            constants.FEATURE_VECTORIZATION_OUTPUT_PATH,
-            str(chunksize),
-        ],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        st.error("Ошибка при вычислении признаков:")
-        st.text(result.stderr)
-        st.stop()
-
-    features: pd.DataFrame = pd.read_parquet(constants.FEATURE_VECTORIZATION_OUTPUT_PATH)
-    os.remove(constants.FEATURE_VECTORIZATION_INPUT_PATH)
-    os.remove(constants.FEATURE_VECTORIZATION_OUTPUT_PATH)
-    return features
-
-
-@st.cache_data(show_spinner="Заполнение пропусков в данных")
-def _impute_extracted_features(df: pd.DataFrame) -> pd.DataFrame:
-    return impute(df)
-
-
-def feature_extraction(
-    df: pd.DataFrame, chunksize: int, y_to_id_mapping: pd.DataFrame
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    extracted_features = _feature_extraction(df=df, chunksize=chunksize)
-    extracted_features = _impute_extracted_features(extracted_features)
-
-    y = (
-        y_to_id_mapping[
-            y_to_id_mapping[f"{constants.EVENT_CHAIN_ID_CON_NAME}_encoded"].isin(
-                df[f"{constants.EVENT_CHAIN_ID_CON_NAME}_encoded"].unique()
-            )
-        ]
-        .sort_values(f"{constants.EVENT_CHAIN_ID_CON_NAME}_encoded")
-        .drop_duplicates(f"{constants.EVENT_CHAIN_ID_CON_NAME}_encoded")
-        .set_index(f"{constants.EVENT_CHAIN_ID_CON_NAME}_encoded")
-    )
-
-    return extracted_features, y
-
-
 @st.cache_data(show_spinner="Отбор полезных фичей")
 def _select_features(df: pd.DataFrame, y: pd.Series) -> pd.DataFrame:
     return select_features(df, y)
@@ -257,6 +151,9 @@ def learn_model(
 
 class ModelLearningResults(pydantic.BaseModel):
     learning_time: float
+    feature_extraction_time: float
+    target_event_name: str
+    window_days: int
     learning_metrics: dict[str, str]
     data_file_name: str
     settings: dict
@@ -275,8 +172,8 @@ def model_learning_page() -> None:
 
     raw_data: pd.DataFrame
     file_name: str
-    raw_data, file_name = load_train_data()
-    raw_data = column_standardization(raw_data)
+    raw_data, file_name = utils.load_train_data(label="Загрузите файл с данными для обучения и модели")
+    raw_data = data_processing.column_standardization(raw_data)
 
     target_event_name: str
     window_days: int
@@ -289,7 +186,7 @@ def model_learning_page() -> None:
 
     processed_data: pd.DataFrame
     y_to_id_mapping: pd.DataFrame
-    processed_data, y_to_id_mapping = preprocess_data(
+    processed_data, y_to_id_mapping, _ = data_processing.preprocess_data(
         df=raw_data, target_event=target_event_name, time_window=f"{window_days}D"
     )
 
@@ -308,9 +205,12 @@ def model_learning_page() -> None:
 
     features: pd.DataFrame
     y: pd.DataFrame
-    features, y = feature_extraction(
+    start_feature_extraction_time = time.time()
+    features, y = data_processing.feature_extraction(
         df=processed_data, chunksize=sidebar_settings.feature_extruction_chunksize, y_to_id_mapping=y_to_id_mapping
     )
+    execution_feature_extraction_time: float = time.time() - start_feature_extraction_time
+    st.write(f"Время извлечения признаков из данных: {execution_feature_extraction_time: 0.4f} секунд")
 
     model: CatBoostClassifier
     metrics_df: pd.DataFrame
@@ -338,6 +238,9 @@ def model_learning_page() -> None:
 
         model_pivot_table_dict[model_name] = ModelLearningResults(
             learning_time=execution_learning_time,
+            feature_extraction_time=execution_feature_extraction_time,
+            target_event_name=target_event_name,
+            window_days=window_days,
             learning_metrics=_prepare_learning_metrics_for_saving(metrics_df),
             data_file_name=file_name,
             settings=sidebar_settings.model_dump(),
