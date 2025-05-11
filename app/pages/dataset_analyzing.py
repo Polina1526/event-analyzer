@@ -117,6 +117,10 @@ def dataset_analyzing_page() -> None:
     threadid_col_name: str
     raw_data, threadid_col_name = data_processing.column_standardization(raw_data, return_threadid_col_name=True)
 
+    # TODO: просто заплатка для тестирования
+    raw_data = raw_data[raw_data[constants.EVENT_TYPE_COL_NAME] != target_event_name]
+    # TODO: просто заплатка для тестирования
+
     processed_data: pd.DataFrame
     y_to_id_mapping: pd.DataFrame
     event_chain_id_col_le: LabelEncoder
