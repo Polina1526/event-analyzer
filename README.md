@@ -40,16 +40,23 @@
 
 ```
 .
-├── app/                   # Логика приложения
-│   ├── pages/             # Страницы Streamlit (обучение модели, анализ данных)
-│   ├── data_processing.py # Обработка и агрегирование событийных данных
-│   ├── utils.py           # Вспомогательные функции
-│   └── constants.py       # Константы приложения
-├── models/                # Сохранённые обученные модели
-├── scripts/               # Вспомогательные скрипты
-├── docker-compose.yml     # Конфигурация docker-compose
-├── pyproject.toml         # Управление зависимостями (Poetry)
-└── README.md              # Документация проекта
+├── app/                           # Логика приложения
+│   ├── constants.py               # Константы приложения
+│   ├── data_processing.py         # Обработка и агрегирование событийных данных
+│   ├── home.py                    # Домашняя страница приложения
+│   ├── pages/                     # Страницы Streamlit (обучение модели, анализ данных)
+│   │   ├── dataset_analyzing.py
+│   │   └── model_learning.py
+│   └── utils.py                   # Вспомогательные функции
+├── models/                        # Сохранённые обученные модели
+├── poetry.lock                    # Управление зависимостями (Poetry)
+├── pyproject.toml                 # Конфигурация python проекта
+└── scripts/                       # Вспомогательные скрипты
+    ├── extract_features_worker.py
+    └── tmp_data/                  # Папка для временных файлов
+├── docker-compose.yml             # Конфигурация docker-compose
+├── Dockerfile                      # Конфигурация docker
+├── README.md
 ```
 
 ## Как пользоваться
