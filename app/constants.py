@@ -8,9 +8,10 @@ EVENT_TYPE_COL_NAME: typing.Final[str] = "event_type"
 EVENT_CHAIN_ID_CON_NAME: typing.Final[str] = "event_chain_id"
 
 DEFAULT_WINDOW_DAYS: typing.Final[int] = 14
+DEFAULT_TARGET_HORIZON: typing.Final[int] = 7
 DEFAULT_DATA_COUNT: typing.Final[int] = 50_000
 
-FEATURE_EXTRACTION_SCRIPT_PATH: typing.Final[str] = "../scripts/extract_features_worker.py"  # ../
+FEATURE_EXTRACTION_SCRIPT_PATH: typing.Final[str] = "../scripts/extract_features_worker.py"
 FEATURE_VECTORIZATION_INPUT_PATH: typing.Final[str] = "scripts/tmp_data/input.parquet"
 FEATURE_VECTORIZATION_OUTPUT_PATH: typing.Final[str] = "scripts/tmp_data/output.parquet"
 DEFAULT_CHUNKSIZE: typing.Final[int] = 50

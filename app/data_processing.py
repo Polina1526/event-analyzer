@@ -10,23 +10,6 @@ from tsfresh.utilities.dataframe_functions import impute
 
 
 def _aggregate_features_before_target_events(df: pd.DataFrame, target_event: str, time_window: str) -> pd.DataFrame:
-    """
-    Агрегирует данные для каждого пользователя до каждого целевого события в заданном временном окне.
-
-    Параметры:
-    ----------
-    df : pd.DataFrame
-        Исходный датафрейм с колонками: timestamp, threadid, event_type
-    target_event : str
-        Название целевого события
-    time_window : str
-        Временное окно для сбора цепочек (формат pandas timedelta, например "14D")
-
-    Возвращает:
-    -----------
-    pd.DataFrame
-        Датафрейм с агрегированными фичами для каждого целевого события
-    """
     df = df.copy()
     df[constants.TIMESTAMP_COL_NAME] = pd.to_datetime(df[constants.TIMESTAMP_COL_NAME])
 
@@ -52,29 +35,6 @@ def _aggregate_features_before_target_events(df: pd.DataFrame, target_event: str
 def _aggregate_features_before_non_target_events(
     df: pd.DataFrame, target_event: str, time_window: str = "14D", min_events: int = 1, random_state: int | None = None
 ):
-    """
-    Возвращает цепочки событий для пользователей без целевого события,
-    начиная со случайного события и собирая историю назад во времени по длине окна.
-
-    Параметры:
-    ----------
-    df : pd.DataFrame
-        Исходный датафрейм с колонками: timestamp, threadid, event_type
-    target_event : str
-        Тип целевого события (которого НЕ должно быть у пользователя)
-    time_window : str
-        Временное окно для сбора цепочек (формат pandas timedelta, например "14D")
-    min_events : int
-        Минимальное количество событий для включения пользователя в результат
-    random_state : int, optional
-        Seed для воспроизводимости случайного выбора
-
-    Возвращает:
-    -----------
-    pd.DataFrame
-        Датафрейм с событиями пользователей, у которых не было целевого события,
-        с цепочками, идущими назад от случайного события длиной с заданное окно
-    """
     df = df.copy()
     df[constants.TIMESTAMP_COL_NAME] = pd.to_datetime(df[constants.TIMESTAMP_COL_NAME])
 

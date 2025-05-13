@@ -19,22 +19,30 @@ st.set_page_config(page_title="Обучение новой модели", page_i
 def get_data_preprocessing_settings(event_options: list[str], max_days_in_data: int) -> tuple[str, int]:
     with st.container(border=True):
         st.subheader("Настройки препроцессинга данных")
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         with col1:
             _target_event_name: list = st.multiselect(
                 label="Выберите название целевого события", options=event_options, max_selections=1
             )
         with col2:
             window_days: int = st.number_input(
-                label="Временное окно цепочки событий (в днях)",
+                label="Временное окно в прошлое для цепочки событий (в днях)",
                 min_value=1,
                 max_value=max_days_in_data,
                 value=min(constants.DEFAULT_WINDOW_DAYS, max_days_in_data),
                 step=1,
             )
-    if not _target_event_name or not window_days:
+        with col3:
+            target_horizon: int = st.number_input(
+                label="Горизонт предсказания наличия целевого события (в днях)",
+                min_value=1,
+                max_value=max_days_in_data,
+                value=min(constants.DEFAULT_TARGET_HORIZON, max_days_in_data),
+                step=1,
+            )
+    if not _target_event_name or not window_days or not target_horizon:
         st.stop()
-    return _target_event_name[0], window_days
+    return _target_event_name[0], window_days, target_horizon
 
 
 class SidebarSettings(pydantic.BaseModel):
@@ -177,7 +185,8 @@ def model_learning_page() -> None:
 
     target_event_name: str
     window_days: int
-    target_event_name, window_days = get_data_preprocessing_settings(
+    target_horizon: int
+    target_event_name, window_days, target_horizon = get_data_preprocessing_settings(
         event_options=raw_data[constants.EVENT_TYPE_COL_NAME].unique(),
         max_days_in_data=(
             raw_data[constants.TIMESTAMP_COL_NAME].max() - raw_data[constants.TIMESTAMP_COL_NAME].min()
